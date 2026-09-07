@@ -95,6 +95,13 @@
   .error { color: var(--danger); font-size: 0.85rem; margin-top: 8px; }
   .empty { color: var(--muted); text-align: center; padding: 32px 0; font-size: 0.9rem; }
   [hidden] { display: none !important; }
+  .chat-messages { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow-y: auto; margin-bottom: 8px; }
+  .msg { padding: 10px 12px; border-radius: 12px; font-size: 0.9rem; white-space: pre-wrap; max-width: 85%; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: white; }
+  .msg.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); }
+  .chat-input-row { display: flex; gap: 8px; }
+  .chat-input-row textarea { min-height: 44px; flex: 1; }
+  .chat-input-row button { flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -115,6 +122,23 @@
       <button id="signInBtn">サインイン</button>
     </div>
     <div id="authMsg" class="error" hidden></div>
+  </div>
+
+  <!-- Claudeとの壁打ち -->
+  <div id="chatCard" class="card" hidden>
+    <div class="toprow" style="margin-bottom: 8px;">
+      <strong style="font-size:0.95rem;">Claudeと話す</strong>
+      <button id="chatResetBtn" class="secondary">会話をリセット</button>
+    </div>
+    <div id="chatMessages" class="chat-messages"></div>
+    <div class="chat-input-row">
+      <textarea id="chatInput" placeholder="思ったことを話してみてください"></textarea>
+      <button id="chatSendBtn">送信</button>
+    </div>
+    <div class="row">
+      <button id="chatSummarizeBtn" class="secondary" disabled>この対話を記録欄にまとめる</button>
+    </div>
+    <div id="chatMsg" class="error" hidden></div>
   </div>
 
   <!-- 投稿フォーム -->
@@ -206,6 +230,89 @@ document.getElementById("submitBtn").addEventListener("click", async () => {
   await loadEntries();
 });
 
+const chatCard = document.getElementById("chatCard");
+const chatMessagesEl = document.getElementById("chatMessages");
+const chatInput = document.getElementById("chatInput");
+const chatSendBtn = document.getElementById("chatSendBtn");
+const chatSummarizeBtn = document.getElementById("chatSummarizeBtn");
+const chatMsg = document.getElementById("chatMsg");
+let chatHistory = [];
+
+function showChatMsg(text) {
+  chatMsg.textContent = text;
+  chatMsg.hidden = !text;
+}
+
+function renderChat() {
+  chatMessagesEl.innerHTML = chatHistory.map(m =>
+    `<div class="msg ${m.role === "user" ? "user" : "assistant"}">${escapeHtml(m.content)}</div>`
+  ).join("");
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  chatSummarizeBtn.disabled = chatHistory.length === 0;
+}
+
+async function callChatFunction(action) {
+  const { data, error } = await sb.functions.invoke("chat-with-claude", {
+    body: { action, messages: chatHistory },
+  });
+  if (error) throw new Error(error.message || "Claudeとの通信に失敗しました");
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+chatSendBtn.addEventListener("click", async () => {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  showChatMsg("");
+  chatHistory.push({ role: "user", content: text });
+  chatInput.value = "";
+  renderChat();
+  chatSendBtn.disabled = true;
+  try {
+    const data = await callChatFunction("chat");
+    chatHistory.push({ role: "assistant", content: data.reply });
+    renderChat();
+  } catch (e) {
+    showChatMsg(e.message);
+    chatHistory.pop();
+    renderChat();
+  } finally {
+    chatSendBtn.disabled = false;
+  }
+});
+
+chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    chatSendBtn.click();
+  }
+});
+
+document.getElementById("chatResetBtn").addEventListener("click", () => {
+  chatHistory = [];
+  showChatMsg("");
+  renderChat();
+});
+
+chatSummarizeBtn.addEventListener("click", async () => {
+  showChatMsg("");
+  chatSummarizeBtn.disabled = true;
+  try {
+    const data = await callChatFunction("summarize");
+    const entry = data.entry;
+    document.getElementById("entryType").value = entry.entry_type === "learning" ? "learning" : "insight";
+    document.getElementById("title").value = entry.title || "";
+    document.getElementById("content").value = entry.content || "";
+    document.getElementById("tags").value = (entry.tags || []).join(", ");
+    document.getElementById("source").value = entry.source || "Claudeとの壁打ち";
+    formCard.scrollIntoView({ behavior: "smooth" });
+  } catch (e) {
+    showChatMsg(e.message);
+  } finally {
+    chatSummarizeBtn.disabled = false;
+  }
+});
+
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -261,6 +368,7 @@ async function loadEntries() {
 
 function setLoggedIn(loggedIn) {
   authCard.hidden = loggedIn;
+  chatCard.hidden = !loggedIn;
   formCard.hidden = !loggedIn;
   signOutBtn.hidden = !loggedIn;
   if (loggedIn) loadEntries();
