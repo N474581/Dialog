@@ -81,11 +81,18 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (action === "summarize") {
+      // Claude Sonnet 5 requires the conversation to end with a user message
+      // (assistant message prefill is not supported), so append a closing
+      // instruction regardless of how the dialogue itself ended.
+      const summarizeMessages = [
+        ...messages,
+        { role: "user", content: "ここまでの対話を振り返り、save_entryツールで気づき・学びとしてまとめてください。" },
+      ];
       const data = await callClaude({
         model: MODEL,
         max_tokens: 1024,
         system: SUMMARIZE_SYSTEM_PROMPT,
-        messages,
+        messages: summarizeMessages,
         tools: [SAVE_ENTRY_TOOL],
         tool_choice: { type: "tool", name: "save_entry" },
       });
@@ -103,6 +110,7 @@ Deno.serve(async (req: Request) => {
     const text = data.content?.find((b: { type: string }) => b.type === "text")?.text ?? "";
     return jsonResponse({ reply: text });
   } catch (e) {
+    console.error(e);
     return jsonResponse({ error: String(e) }, 502);
   }
 });
