@@ -42,6 +42,12 @@ const SAVE_ENTRY_TOOL = {
   },
 };
 
+const SCHEDULE_SYSTEM_PROMPT = `あなたはユーザーのスケジュール管理を手伝うプランナーです。
+ユーザーが達成したい目標と、締切・制約(すでに埋まっている予定や1日に使える時間など)が与えられます。
+必要であればweb検索を使って、イベントの正確な開催期間や関連情報を確認してください（ゲームのイベントなど、日付が重要な場合は特に確認してください）。
+そのうえで、締切までに無理なく達成できる現実的な日程表を、日付ごとの箇条書きで具体的に作成してください。
+web検索の実況や「検索します」といった前置きは書かず、最終的な日程表の本文だけを日本語で出力してください。`;
+
 const SAVE_AXIS_TOOL = {
   name: "save_axis",
   description: "蓄積された記録から、ユーザーの価値観・大切にしていることを1件の振り返りとしてまとめる",
@@ -96,7 +102,14 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "ANTHROPIC_API_KEY is not configured on this Edge Function" }, 500);
   }
 
-  let body: { action?: string; messages?: ChatMessage[]; entries?: EntrySummary[] };
+  let body: {
+    action?: string;
+    messages?: ChatMessage[];
+    entries?: EntrySummary[];
+    goal?: string;
+    deadline?: string;
+    constraints?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -106,6 +119,28 @@ Deno.serve(async (req: Request) => {
   const { action } = body;
 
   try {
+    if (action === "schedule") {
+      const goal = body.goal;
+      if (!goal) return jsonResponse({ error: "goal is required" }, 400);
+      const parts = [`目標: ${goal}`];
+      if (body.deadline) parts.push(`締切: ${body.deadline}`);
+      if (body.constraints) parts.push(`制約・すでにある予定: ${body.constraints}`);
+
+      const data = await callClaude({
+        model: MODEL,
+        max_tokens: 1536,
+        system: SCHEDULE_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: parts.join("\n") }],
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }],
+      });
+      const text = (data.content || [])
+        .filter((b: { type: string }) => b.type === "text")
+        .map((b: { text: string }) => b.text)
+        .join("\n");
+      if (!text) return jsonResponse({ error: "no plan text from Claude" }, 502);
+      return jsonResponse({ plan: text });
+    }
+
     if (action === "reflect") {
       const entries = body.entries;
       if (!Array.isArray(entries) || entries.length === 0) {

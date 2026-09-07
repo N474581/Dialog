@@ -88,6 +88,7 @@
     flex-shrink: 0;
   }
   .badge.axis { background: #9333ea; }
+  .badge.plan { background: #0891b2; }
   .entry-title { font-weight: 600; margin: 0; }
   .entry-content { white-space: pre-wrap; margin: 8px 0; font-size: 0.9rem; }
   .entry-meta { font-size: 0.75rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -107,6 +108,7 @@
   .axis-title { font-weight: 700; margin: 4px 0 8px; color: #9333ea; }
   .axis-content { white-space: pre-wrap; font-size: 0.9rem; }
   .axis-empty { color: var(--muted); font-size: 0.85rem; }
+  .plan-result { white-space: pre-wrap; font-size: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; }
   .search-row { margin-bottom: 16px; }
   .image-thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   .image-thumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
@@ -166,6 +168,25 @@
       <button id="chatSummarizeBtn" class="secondary" disabled>この対話を保存する</button>
     </div>
     <div id="chatMsg" class="error" hidden></div>
+  </div>
+
+  <!-- スケジュール相談 -->
+  <div id="scheduleCard" class="card" hidden>
+    <strong style="font-size:0.95rem;">スケジュールを相談する</strong>
+    <label for="scheduleGoal">達成したいこと</label>
+    <input id="scheduleGoal" type="text" placeholder="例: FGOの夢見の回廊イベントをクリアしたい" />
+    <label for="scheduleDeadline">締切（任意）</label>
+    <input id="scheduleDeadline" type="date" />
+    <label for="scheduleConstraints">制約・すでにある予定（任意）</label>
+    <textarea id="scheduleConstraints" placeholder="例: 平日は21時以降1時間、休日は3時間ほど使える"></textarea>
+    <div class="row">
+      <button id="scheduleGenerateBtn">スケジュールを作ってもらう</button>
+    </div>
+    <div id="scheduleResult" class="plan-result" hidden></div>
+    <div class="row" id="scheduleSaveRow" hidden>
+      <button id="scheduleSaveBtn" class="secondary">この内容で保存する</button>
+    </div>
+    <div id="scheduleMsg" class="error" hidden></div>
   </div>
 
   <!-- 投稿フォーム -->
@@ -426,7 +447,7 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-const ENTRY_TYPE_LABELS = { insight: "気づき", learning: "学び", axis: "軸" };
+const ENTRY_TYPE_LABELS = { insight: "気づき", learning: "学び", axis: "軸", plan: "予定" };
 let allEntries = [];
 let imageUrlCache = {};
 
@@ -474,7 +495,7 @@ function renderEntryList() {
 
   listEl.innerHTML = filtered.map(entry => {
     const label = ENTRY_TYPE_LABELS[entry.entry_type] || entry.entry_type;
-    const badgeCls = entry.entry_type === "axis" ? " axis" : "";
+    const badgeCls = entry.entry_type === "axis" ? " axis" : entry.entry_type === "plan" ? " plan" : "";
     const tags = (entry.tags || []).map(t => {
       const cls = t === "続けたい" ? " keep" : t === "減らしたい" ? " reduce" : "";
       return `<span class="tag${cls}">#${escapeHtml(t)}</span>`;
@@ -589,10 +610,90 @@ axisRefreshBtn.addEventListener("click", async () => {
   }
 });
 
+const scheduleCard = document.getElementById("scheduleCard");
+const scheduleGoal = document.getElementById("scheduleGoal");
+const scheduleDeadline = document.getElementById("scheduleDeadline");
+const scheduleConstraints = document.getElementById("scheduleConstraints");
+const scheduleGenerateBtn = document.getElementById("scheduleGenerateBtn");
+const scheduleResult = document.getElementById("scheduleResult");
+const scheduleSaveRow = document.getElementById("scheduleSaveRow");
+const scheduleSaveBtn = document.getElementById("scheduleSaveBtn");
+const scheduleMsg = document.getElementById("scheduleMsg");
+let currentPlanText = "";
+
+function showScheduleMsg(text) {
+  scheduleMsg.textContent = text;
+  scheduleMsg.hidden = !text;
+}
+
+scheduleGenerateBtn.addEventListener("click", async () => {
+  showScheduleMsg("");
+  const goal = scheduleGoal.value.trim();
+  if (!goal) {
+    showScheduleMsg("達成したいことを入力してください。");
+    return;
+  }
+  scheduleGenerateBtn.disabled = true;
+  scheduleResult.hidden = true;
+  scheduleSaveRow.hidden = true;
+  scheduleResult.textContent = "考え中です…（web検索を行う場合、数十秒かかることがあります）";
+  scheduleResult.hidden = false;
+  try {
+    const { data, error } = await sb.functions.invoke("chat-with-claude", {
+      body: {
+        action: "schedule",
+        goal,
+        deadline: scheduleDeadline.value || "",
+        constraints: scheduleConstraints.value.trim(),
+      },
+    });
+    if (error) throw new Error(error.message || "Claudeとの通信に失敗しました");
+    if (data?.error) throw new Error(data.error);
+
+    currentPlanText = data.plan;
+    scheduleResult.textContent = currentPlanText;
+    scheduleSaveRow.hidden = false;
+  } catch (e) {
+    scheduleResult.hidden = true;
+    showScheduleMsg(e.message);
+  } finally {
+    scheduleGenerateBtn.disabled = false;
+  }
+});
+
+scheduleSaveBtn.addEventListener("click", async () => {
+  showScheduleMsg("");
+  scheduleSaveBtn.disabled = true;
+  try {
+    const goal = scheduleGoal.value.trim();
+    const { error } = await sb.from("learnings").insert({
+      entry_type: "plan",
+      title: goal.length > 40 ? goal.slice(0, 40) + "…" : goal,
+      content: currentPlanText,
+      tags: ["予定"],
+      source: "Claudeとのスケジュール相談",
+    });
+    if (error) throw new Error(error.message);
+
+    scheduleGoal.value = "";
+    scheduleDeadline.value = "";
+    scheduleConstraints.value = "";
+    currentPlanText = "";
+    scheduleResult.hidden = true;
+    scheduleSaveRow.hidden = true;
+    await loadEntries();
+  } catch (e) {
+    showScheduleMsg(e.message);
+  } finally {
+    scheduleSaveBtn.disabled = false;
+  }
+});
+
 function setLoggedIn(loggedIn) {
   authCard.hidden = loggedIn;
   axisCard.hidden = !loggedIn;
   chatCard.hidden = !loggedIn;
+  scheduleCard.hidden = !loggedIn;
   formCard.hidden = !loggedIn;
   signOutBtn.hidden = !loggedIn;
   if (loggedIn) {
