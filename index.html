@@ -92,6 +92,12 @@
   .entry-meta { font-size: 0.75rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .tags { display: flex; gap: 4px; flex-wrap: wrap; }
   .tag { font-size: 0.7rem; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; color: var(--muted); }
+  .tag.keep { background: #16a34a22; border-color: #16a34a55; color: #16a34a; }
+  .tag.reduce { background: #dc262622; border-color: #dc262655; color: #dc2626; }
+  .quick-tags { display: flex; gap: 8px; margin-top: 6px; }
+  .quick-tag { flex: 1; padding: 8px; font-size: 0.85rem; font-weight: 500; background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .quick-tag.keep.active { background: #16a34a22; border-color: #16a34a; color: #16a34a; }
+  .quick-tag.reduce.active { background: #dc262622; border-color: #dc2626; color: #dc2626; }
   .error { color: var(--danger); font-size: 0.85rem; margin-top: 8px; }
   .empty { color: var(--muted); text-align: center; padding: 32px 0; font-size: 0.9rem; }
   [hidden] { display: none !important; }
@@ -154,6 +160,10 @@
     <textarea id="content" placeholder="詳しく書く"></textarea>
     <label for="tags">タグ（カンマ区切り）</label>
     <input id="tags" type="text" placeholder="仕事, 読書" />
+    <div class="quick-tags">
+      <button type="button" class="quick-tag keep" data-tag="続けたい">続けたい</button>
+      <button type="button" class="quick-tag reduce" data-tag="減らしたい">減らしたい</button>
+    </div>
     <label for="source">きっかけ（任意）</label>
     <input id="source" type="text" placeholder="本、会話、経験など" />
     <div class="row">
@@ -204,6 +214,35 @@ signOutBtn.addEventListener("click", async () => {
   await sb.auth.signOut();
 });
 
+const tagsInput = document.getElementById("tags");
+
+function getTagList() {
+  return tagsInput.value.split(",").map(t => t.trim()).filter(Boolean);
+}
+
+function syncQuickTagButtons() {
+  const current = getTagList();
+  document.querySelectorAll(".quick-tag").forEach(btn => {
+    btn.classList.toggle("active", current.includes(btn.dataset.tag));
+  });
+}
+
+document.querySelectorAll(".quick-tag").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const tag = btn.dataset.tag;
+    let current = getTagList();
+    if (current.includes(tag)) {
+      current = current.filter(t => t !== tag);
+    } else {
+      current.push(tag);
+    }
+    tagsInput.value = current.join(", ");
+    syncQuickTagButtons();
+  });
+});
+
+tagsInput.addEventListener("input", syncQuickTagButtons);
+
 document.getElementById("submitBtn").addEventListener("click", async () => {
   showFormMsg("");
   const entry_type = document.getElementById("entryType").value;
@@ -227,6 +266,7 @@ document.getElementById("submitBtn").addEventListener("click", async () => {
   document.getElementById("content").value = "";
   document.getElementById("tags").value = "";
   document.getElementById("source").value = "";
+  syncQuickTagButtons();
   await loadEntries();
 });
 
@@ -305,6 +345,7 @@ chatSummarizeBtn.addEventListener("click", async () => {
     document.getElementById("content").value = entry.content || "";
     document.getElementById("tags").value = (entry.tags || []).join(", ");
     document.getElementById("source").value = entry.source || "Claudeとの壁打ち";
+    syncQuickTagButtons();
     formCard.scrollIntoView({ behavior: "smooth" });
   } catch (e) {
     showChatMsg(e.message);
@@ -335,7 +376,10 @@ async function loadEntries() {
 
   listEl.innerHTML = data.map(entry => {
     const label = entry.entry_type === "insight" ? "気づき" : "学び";
-    const tags = (entry.tags || []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join("");
+    const tags = (entry.tags || []).map(t => {
+      const cls = t === "続けたい" ? " keep" : t === "減らしたい" ? " reduce" : "";
+      return `<span class="tag${cls}">#${escapeHtml(t)}</span>`;
+    }).join("");
     const date = new Date(entry.created_at).toLocaleString("ja-JP");
     return `
       <div class="entry" data-id="${entry.id}">

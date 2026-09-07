@@ -16,6 +16,7 @@ const CHAT_SYSTEM_PROMPT = `あなたは、ユーザーが日々感じた気づ�
 
 const SUMMARIZE_SYSTEM_PROMPT = `これまでの対話全体を振り返り、ユーザーの気づき・学びを1件のデータベース記録としてまとめてください。
 本文(content)はユーザー自身の言葉やニュアンスを尊重し、要約しすぎず自然な文章にしてください。
+対話の内容が明確に「これからも続けたいこと」であれば tags に「続けたい」を、明確に「減らしたい・やめたいこと」であれば「減らしたい」を含めてください。どちらとも言えない場合は無理に付けないでください。
 必ず save_entry ツールを呼び出して結果を返してください。`;
 
 const SAVE_ENTRY_TOOL = {
@@ -27,7 +28,7 @@ const SAVE_ENTRY_TOOL = {
       entry_type: { type: "string", enum: ["insight", "learning"], description: "「気づき」か「学び」か" },
       title: { type: "string", description: "一言のタイトル" },
       content: { type: "string", description: "対話の内容をふまえた本文" },
-      tags: { type: "array", items: { type: "string" }, description: "内容に関連するタグ" },
+      tags: { type: "array", items: { type: "string" }, description: "内容に関連するタグ。続けたいことなら'続けたい'、減らしたいことなら'減らしたい'を含めてよい" },
       source: { type: "string", description: "きっかけ。例: 'Claudeとの壁打ち'" },
     },
     required: ["entry_type", "title", "content"],
