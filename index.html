@@ -87,6 +87,7 @@
     color: white;
     flex-shrink: 0;
   }
+  .badge.axis { background: #9333ea; }
   .entry-title { font-weight: 600; margin: 0; }
   .entry-content { white-space: pre-wrap; margin: 8px 0; font-size: 0.9rem; }
   .entry-meta { font-size: 0.75rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -99,8 +100,18 @@
   .quick-tag.keep.active { background: #16a34a22; border-color: #16a34a; color: #16a34a; }
   .quick-tag.reduce.active { background: #dc262622; border-color: #dc2626; color: #dc2626; }
   .error { color: var(--danger); font-size: 0.85rem; margin-top: 8px; }
+  .success { color: #16a34a; font-size: 0.85rem; margin-top: 8px; }
   .empty { color: var(--muted); text-align: center; padding: 32px 0; font-size: 0.9rem; }
   [hidden] { display: none !important; }
+  .axis-card { border: 1px solid #9333ea55; background: #9333ea11; }
+  .axis-title { font-weight: 700; margin: 4px 0 8px; color: #9333ea; }
+  .axis-content { white-space: pre-wrap; font-size: 0.9rem; }
+  .axis-empty { color: var(--muted); font-size: 0.85rem; }
+  .search-row { margin-bottom: 16px; }
+  .image-thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .image-thumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+  .entry-images { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  .entry-images img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; }
   .chat-messages { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow-y: auto; margin-bottom: 8px; }
   .msg { padding: 10px 12px; border-radius: 12px; font-size: 0.9rem; white-space: pre-wrap; max-width: 85%; }
   .msg.user { align-self: flex-end; background: var(--accent); color: white; }
@@ -130,6 +141,16 @@
     <div id="authMsg" class="error" hidden></div>
   </div>
 
+  <!-- 自分の軸 -->
+  <div id="axisCard" class="card axis-card" hidden>
+    <div class="toprow" style="margin-bottom: 4px;">
+      <strong style="font-size:0.95rem;">あなたの軸</strong>
+      <button id="axisRefreshBtn" class="secondary">ふりかえる</button>
+    </div>
+    <div id="axisBody"></div>
+    <div id="axisMsg" class="error" hidden></div>
+  </div>
+
   <!-- Claudeとの壁打ち -->
   <div id="chatCard" class="card" hidden>
     <div class="toprow" style="margin-bottom: 8px;">
@@ -142,7 +163,7 @@
       <button id="chatSendBtn">送信</button>
     </div>
     <div class="row">
-      <button id="chatSummarizeBtn" class="secondary" disabled>この対話を記録欄にまとめる</button>
+      <button id="chatSummarizeBtn" class="secondary" disabled>この対話を保存する</button>
     </div>
     <div id="chatMsg" class="error" hidden></div>
   </div>
@@ -166,10 +187,17 @@
     </div>
     <label for="source">きっかけ（任意）</label>
     <input id="source" type="text" placeholder="本、会話、経験など" />
+    <label for="images">写真・イラスト（任意）</label>
+    <input id="images" type="file" accept="image/*" multiple />
+    <div id="imagePreview" class="image-thumbs"></div>
     <div class="row">
       <button id="submitBtn">保存する</button>
     </div>
     <div id="formMsg" class="error" hidden></div>
+  </div>
+
+  <div class="search-row">
+    <input id="searchInput" type="text" placeholder="キーワードやタグで検索" />
   </div>
 
   <div id="list"></div>
@@ -243,6 +271,29 @@ document.querySelectorAll(".quick-tag").forEach(btn => {
 
 tagsInput.addEventListener("input", syncQuickTagButtons);
 
+const imagesInput = document.getElementById("images");
+const imagePreview = document.getElementById("imagePreview");
+let selectedImageFiles = [];
+
+imagesInput.addEventListener("change", () => {
+  selectedImageFiles = Array.from(imagesInput.files || []);
+  imagePreview.innerHTML = selectedImageFiles
+    .map(f => `<img src="${URL.createObjectURL(f)}" alt="${escapeHtml(f.name)}" />`)
+    .join("");
+});
+
+async function uploadSelectedImages() {
+  const paths = [];
+  for (const file of selectedImageFiles) {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+    const { error } = await sb.storage.from("learning-media").upload(path, file, { contentType: file.type });
+    if (error) throw new Error(`画像のアップロードに失敗しました: ${error.message}`);
+    paths.push(path);
+  }
+  return paths;
+}
+
 document.getElementById("submitBtn").addEventListener("click", async () => {
   showFormMsg("");
   const entry_type = document.getElementById("entryType").value;
@@ -257,17 +308,27 @@ document.getElementById("submitBtn").addEventListener("click", async () => {
     return;
   }
 
-  const { error } = await sb.from("learnings").insert({ entry_type, title, content, tags, source });
-  if (error) {
-    showFormMsg(error.message);
-    return;
+  const submitBtn = document.getElementById("submitBtn");
+  submitBtn.disabled = true;
+  try {
+    const image_paths = await uploadSelectedImages();
+    const { error } = await sb.from("learnings").insert({ entry_type, title, content, tags, source, image_paths });
+    if (error) throw new Error(error.message);
+
+    document.getElementById("title").value = "";
+    document.getElementById("content").value = "";
+    document.getElementById("tags").value = "";
+    document.getElementById("source").value = "";
+    imagesInput.value = "";
+    selectedImageFiles = [];
+    imagePreview.innerHTML = "";
+    syncQuickTagButtons();
+    await loadEntries();
+  } catch (e) {
+    showFormMsg(e.message);
+  } finally {
+    submitBtn.disabled = false;
   }
-  document.getElementById("title").value = "";
-  document.getElementById("content").value = "";
-  document.getElementById("tags").value = "";
-  document.getElementById("source").value = "";
-  syncQuickTagButtons();
-  await loadEntries();
 });
 
 const chatCard = document.getElementById("chatCard");
@@ -278,9 +339,10 @@ const chatSummarizeBtn = document.getElementById("chatSummarizeBtn");
 const chatMsg = document.getElementById("chatMsg");
 let chatHistory = [];
 
-function showChatMsg(text) {
+function showChatMsg(text, kind) {
   chatMsg.textContent = text;
   chatMsg.hidden = !text;
+  chatMsg.className = kind === "success" ? "success" : "error";
 }
 
 function renderChat() {
@@ -340,13 +402,19 @@ chatSummarizeBtn.addEventListener("click", async () => {
   try {
     const data = await callChatFunction("summarize");
     const entry = data.entry;
-    document.getElementById("entryType").value = entry.entry_type === "learning" ? "learning" : "insight";
-    document.getElementById("title").value = entry.title || "";
-    document.getElementById("content").value = entry.content || "";
-    document.getElementById("tags").value = (entry.tags || []).join(", ");
-    document.getElementById("source").value = entry.source || "Claudeとの壁打ち";
-    syncQuickTagButtons();
-    formCard.scrollIntoView({ behavior: "smooth" });
+    const { error } = await sb.from("learnings").insert({
+      entry_type: entry.entry_type === "learning" ? "learning" : "insight",
+      title: entry.title || "",
+      content: entry.content || "",
+      tags: entry.tags || [],
+      source: entry.source || "Claudeとの壁打ち",
+    });
+    if (error) throw new Error(error.message);
+
+    chatHistory = [];
+    renderChat();
+    showChatMsg(`保存しました:「${entry.title}」`, "success");
+    await loadEntries();
   } catch (e) {
     showChatMsg(e.message);
   } finally {
@@ -356,6 +424,20 @@ chatSummarizeBtn.addEventListener("click", async () => {
 
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+const ENTRY_TYPE_LABELS = { insight: "気づき", learning: "学び", axis: "軸" };
+let allEntries = [];
+let imageUrlCache = {};
+
+async function loadSignedImageUrls(entries) {
+  const allPaths = entries.flatMap(e => e.image_paths || []);
+  if (allPaths.length === 0) return;
+  const { data, error } = await sb.storage.from("learning-media").createSignedUrls(allPaths, 3600);
+  if (error || !data) return;
+  data.forEach(item => {
+    if (item.signedUrl) imageUrlCache[item.path] = item.signedUrl;
+  });
 }
 
 async function loadEntries() {
@@ -369,25 +451,47 @@ async function loadEntries() {
     return;
   }
 
-  if (!data || data.length === 0) {
-    listEl.innerHTML = `<div class="empty">まだ記録がありません。最初の気づき・学びを保存してみましょう。</div>`;
+  allEntries = data || [];
+  await loadSignedImageUrls(allEntries);
+  renderEntryList();
+}
+
+function renderEntryList() {
+  const query = searchInput.value.trim().toLowerCase();
+  const filtered = query
+    ? allEntries.filter(e => {
+        const haystack = [e.title, e.content, ...(e.tags || [])].join(" ").toLowerCase();
+        return haystack.includes(query);
+      })
+    : allEntries;
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = query
+      ? `<div class="empty">一致する記録が見つかりませんでした。</div>`
+      : `<div class="empty">まだ記録がありません。最初の気づき・学びを保存してみましょう。</div>`;
     return;
   }
 
-  listEl.innerHTML = data.map(entry => {
-    const label = entry.entry_type === "insight" ? "気づき" : "学び";
+  listEl.innerHTML = filtered.map(entry => {
+    const label = ENTRY_TYPE_LABELS[entry.entry_type] || entry.entry_type;
+    const badgeCls = entry.entry_type === "axis" ? " axis" : "";
     const tags = (entry.tags || []).map(t => {
       const cls = t === "続けたい" ? " keep" : t === "減らしたい" ? " reduce" : "";
       return `<span class="tag${cls}">#${escapeHtml(t)}</span>`;
     }).join("");
+    const images = (entry.image_paths || [])
+      .filter(p => imageUrlCache[p])
+      .map(p => `<img src="${imageUrlCache[p]}" alt="添付画像" />`)
+      .join("");
     const date = new Date(entry.created_at).toLocaleString("ja-JP");
     return `
       <div class="entry" data-id="${entry.id}">
         <div class="entry-head">
           <p class="entry-title">${escapeHtml(entry.title)}</p>
-          <span class="badge">${label}</span>
+          <span class="badge${badgeCls}">${label}</span>
         </div>
         <p class="entry-content">${escapeHtml(entry.content)}</p>
+        ${images ? `<div class="entry-images">${images}</div>` : ""}
         <div class="entry-meta">
           <div class="tags">${tags}</div>
           <div style="display:flex; gap:8px; align-items:center;">
@@ -410,13 +514,93 @@ async function loadEntries() {
   });
 }
 
+const searchInput = document.getElementById("searchInput");
+searchInput.addEventListener("input", renderEntryList);
+
+const axisCard = document.getElementById("axisCard");
+const axisBody = document.getElementById("axisBody");
+const axisMsg = document.getElementById("axisMsg");
+const axisRefreshBtn = document.getElementById("axisRefreshBtn");
+
+function showAxisMsg(text) {
+  axisMsg.textContent = text;
+  axisMsg.hidden = !text;
+}
+
+async function loadAxis() {
+  const { data, error } = await sb
+    .from("learnings")
+    .select("*")
+    .eq("entry_type", "axis")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    axisBody.innerHTML = `<div class="axis-empty">まだ「軸」は見つかっていません。記録がある程度たまったら「ふりかえる」を押してみてください。</div>`;
+    return;
+  }
+
+  const axis = data[0];
+  axisBody.innerHTML = `
+    <p class="axis-title">${escapeHtml(axis.title)}</p>
+    <p class="axis-content">${escapeHtml(axis.content)}</p>
+    <p style="font-size:0.75rem; color: var(--muted); margin-top: 8px;">${new Date(axis.created_at).toLocaleDateString("ja-JP")}時点のふりかえり</p>
+  `;
+}
+
+axisRefreshBtn.addEventListener("click", async () => {
+  showAxisMsg("");
+  axisRefreshBtn.disabled = true;
+  try {
+    const { data, error } = await sb
+      .from("learnings")
+      .select("created_at, entry_type, title, content, tags")
+      .neq("entry_type", "axis")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) {
+      showAxisMsg("まずは気づき・学びをいくつか記録してみてください。");
+      return;
+    }
+
+    const { data: fnData, error: fnError } = await sb.functions.invoke("chat-with-claude", {
+      body: { action: "reflect", entries: data },
+    });
+    if (fnError) throw new Error(fnError.message || "Claudeとの通信に失敗しました");
+    if (fnData?.error) throw new Error(fnData.error);
+
+    const axis = fnData.axis;
+    const { error: insertError } = await sb.from("learnings").insert({
+      entry_type: "axis",
+      title: axis.title,
+      content: axis.content,
+      tags: ["軸"],
+      source: "Claudeとの振り返り",
+    });
+    if (insertError) throw new Error(insertError.message);
+
+    await loadAxis();
+    await loadEntries();
+  } catch (e) {
+    showAxisMsg(e.message);
+  } finally {
+    axisRefreshBtn.disabled = false;
+  }
+});
+
 function setLoggedIn(loggedIn) {
   authCard.hidden = loggedIn;
+  axisCard.hidden = !loggedIn;
   chatCard.hidden = !loggedIn;
   formCard.hidden = !loggedIn;
   signOutBtn.hidden = !loggedIn;
-  if (loggedIn) loadEntries();
-  else listEl.innerHTML = "";
+  if (loggedIn) {
+    loadEntries();
+    loadAxis();
+  } else {
+    listEl.innerHTML = "";
+  }
 }
 
 sb.auth.onAuthStateChange((_event, session) => {
