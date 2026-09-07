@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dialog - 気づき・学びメモ</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --danger: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --card: #212226;
+      --text: #f1f1f1;
+      --muted: #9ca3af;
+      --border: #33343a;
+      --accent: #60a5fa;
+      --danger: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 0.85rem; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin: 12px 0 4px; }
+  input, textarea, select {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+  textarea { min-height: 90px; resize: vertical; }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    background: var(--accent);
+    color: white;
+  }
+  button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  button.danger { background: transparent; color: var(--danger); border: 1px solid var(--border); }
+  .row { display: flex; gap: 8px; margin-top: 16px; }
+  .row > button { flex: 1; }
+  .toprow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .entry {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: white;
+    flex-shrink: 0;
+  }
+  .entry-title { font-weight: 600; margin: 0; }
+  .entry-content { white-space: pre-wrap; margin: 8px 0; font-size: 0.9rem; }
+  .entry-meta { font-size: 0.75rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tag { font-size: 0.7rem; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; color: var(--muted); }
+  .error { color: var(--danger); font-size: 0.85rem; margin-top: 8px; }
+  .empty { color: var(--muted); text-align: center; padding: 32px 0; font-size: 0.9rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="toprow">
+    <div>
+      <h1>Dialog</h1>
+      <div class="sub">日々の気づき・学びを保存するメモ</div>
+    </div>
+    <button id="signOutBtn" class="secondary" hidden>サインアウト</button>
+  </div>
+
+  <!-- ログイン画面（本人専用。登録機能はなし） -->
+  <div id="authCard" class="card">
+    <label for="password">パスワード</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="パスワード" />
+    <div class="row">
+      <button id="signInBtn">サインイン</button>
+    </div>
+    <div id="authMsg" class="error" hidden></div>
+  </div>
+
+  <!-- 投稿フォーム -->
+  <div id="formCard" class="card" hidden>
+    <label for="entryType">種類</label>
+    <select id="entryType">
+      <option value="insight">気づき</option>
+      <option value="learning">学び</option>
+    </select>
+    <label for="title">タイトル</label>
+    <input id="title" type="text" placeholder="一言で" />
+    <label for="content">内容</label>
+    <textarea id="content" placeholder="詳しく書く"></textarea>
+    <label for="tags">タグ（カンマ区切り）</label>
+    <input id="tags" type="text" placeholder="仕事, 読書" />
+    <label for="source">きっかけ（任意）</label>
+    <input id="source" type="text" placeholder="本、会話、経験など" />
+    <div class="row">
+      <button id="submitBtn">保存する</button>
+    </div>
+    <div id="formMsg" class="error" hidden></div>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+const SUPABASE_URL = "https://gyuhvbkfsxkrbzjfpbgv.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd5dWh2Ymtmc3hrcmJ6amZwYmd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NDc0NjQsImV4cCI6MjEwNDMyMzQ2NH0.6nXECoYTKRbRH_oaoMSluidplIu642dUj7jJq_gV-vs";
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const authCard = document.getElementById("authCard");
+const formCard = document.getElementById("formCard");
+const signOutBtn = document.getElementById("signOutBtn");
+const authMsg = document.getElementById("authMsg");
+const formMsg = document.getElementById("formMsg");
+const listEl = document.getElementById("list");
+
+function showAuthMsg(text) {
+  authMsg.textContent = text;
+  authMsg.hidden = !text;
+}
+function showFormMsg(text) {
+  formMsg.textContent = text;
+  formMsg.hidden = !text;
+}
+
+const OWNER_EMAIL = "howling_juntas_06@icloud.com";
+
+document.getElementById("signInBtn").addEventListener("click", async () => {
+  showAuthMsg("");
+  const password = document.getElementById("password").value;
+  const { error } = await sb.auth.signInWithPassword({ email: OWNER_EMAIL, password });
+  if (error) showAuthMsg(error.message);
+});
+
+document.getElementById("password").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("signInBtn").click();
+});
+
+signOutBtn.addEventListener("click", async () => {
+  await sb.auth.signOut();
+});
+
+document.getElementById("submitBtn").addEventListener("click", async () => {
+  showFormMsg("");
+  const entry_type = document.getElementById("entryType").value;
+  const title = document.getElementById("title").value.trim();
+  const content = document.getElementById("content").value.trim();
+  const tagsRaw = document.getElementById("tags").value.trim();
+  const source = document.getElementById("source").value.trim() || null;
+  const tags = tagsRaw ? tagsRaw.split(",").map(t => t.trim()).filter(Boolean) : [];
+
+  if (!title || !content) {
+    showFormMsg("タイトルと内容は必須です。");
+    return;
+  }
+
+  const { error } = await sb.from("learnings").insert({ entry_type, title, content, tags, source });
+  if (error) {
+    showFormMsg(error.message);
+    return;
+  }
+  document.getElementById("title").value = "";
+  document.getElementById("content").value = "";
+  document.getElementById("tags").value = "";
+  document.getElementById("source").value = "";
+  await loadEntries();
+});
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function loadEntries() {
+  const { data, error } = await sb
+    .from("learnings")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    listEl.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    listEl.innerHTML = `<div class="empty">まだ記録がありません。最初の気づき・学びを保存してみましょう。</div>`;
+    return;
+  }
+
+  listEl.innerHTML = data.map(entry => {
+    const label = entry.entry_type === "insight" ? "気づき" : "学び";
+    const tags = (entry.tags || []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join("");
+    const date = new Date(entry.created_at).toLocaleString("ja-JP");
+    return `
+      <div class="entry" data-id="${entry.id}">
+        <div class="entry-head">
+          <p class="entry-title">${escapeHtml(entry.title)}</p>
+          <span class="badge">${label}</span>
+        </div>
+        <p class="entry-content">${escapeHtml(entry.content)}</p>
+        <div class="entry-meta">
+          <div class="tags">${tags}</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <span>${date}${entry.source ? " ・ " + escapeHtml(entry.source) : ""}</span>
+            <button class="danger delete-btn" data-id="${entry.id}">削除</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  listEl.querySelectorAll(".delete-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-id");
+      if (!confirm("この記録を削除しますか？")) return;
+      const { error } = await sb.from("learnings").delete().eq("id", id);
+      if (error) alert(error.message);
+      else loadEntries();
+    });
+  });
+}
+
+function setLoggedIn(loggedIn) {
+  authCard.hidden = loggedIn;
+  formCard.hidden = !loggedIn;
+  signOutBtn.hidden = !loggedIn;
+  if (loggedIn) loadEntries();
+  else listEl.innerHTML = "";
+}
+
+sb.auth.onAuthStateChange((_event, session) => {
+  setLoggedIn(!!session);
+});
+
+sb.auth.getSession().then(({ data }) => {
+  setLoggedIn(!!data.session);
+});
+</script>
+</body>
+</html>
